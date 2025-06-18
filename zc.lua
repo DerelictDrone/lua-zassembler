@@ -1,5 +1,4 @@
-local starttime = os.epoch("local")
-local benchtime
+-- local starttime = os.epoch("local")
 -- tokenizer
 local smatch = string.match
 
@@ -18,9 +17,21 @@ local function fuzz(str,barrier,paren)
 	return newpat
 end
 
+local errorCallback
+local errFname
 --error wrapper
 local function tokenError(msg,token)
-	error(string.format("%s\n[line: %d column: %d]",msg,token.line,token.s),0)
+	token.line = token.line + 2
+	local msg = string.format("[line: %d column: %d] %s",token.line,token.s,msg)
+	if errorCallback then
+		errorCallback(msg,{
+			Line = token.line,
+			Col = token.s,
+			File = errFname
+		})
+	else
+		error(msg,0)
+	end
 end
 
 local TOKEN_PATTERNS = {
@@ -340,8 +351,6 @@ local HL_TOKEN_PATTERNS = {
 		{"DB","CONST_SINGLE"}
 	},
 	ALLOC_COMPLETE = {
-		{"ALLOC","CONST_SINGLE","OP_.*","!BREAK!"},
-		{"ALLOC","CONST_SINGLE","OPERATOR*","!BREAK!"},
 		{"ALLOC","CONST_SINGLE","COMMA","!BREAK!"},
 		{"ALLOC","COMPLETE_VALUE_GROUP"},
 		{"ALLOC","CONST_SINGLE"},
@@ -423,8 +432,6 @@ local HL_TOKEN_ORDER = {
 	h.MACRO,
 	h.COMPLETE_MACRO,
 }
-
-_G.HL_TOKEN_PATTERNS = HL_TOKEN_PATTERNS
 
 local errorTokens = {
 	OPERATOR_ASSIGN = "Assignment cannot be done, as there are no variables in this assembler.",
@@ -509,10 +516,13 @@ end
 local Instructions = {}
 do
 	local unsortedInstructions = {}
-	local curdir = fs.getDir(shell.getRunningProgram())
-	local files = fs.list(fs.combine(curdir,"inst"))
+	local files = file.Find("wire/client/zc_inst/*.lua","LUA")
+	-- print("Files discovered: ",#files)
 	for _,i in ipairs(files) do
-		local p = require("inst."..i)
+		local fname = "wire/client/zc_inst/"..i
+		-- print(_,i,"\n",fname)
+		AddCSLuaFile(fname)
+		local p = include(fname)
 		for _,i in ipairs(p) do
 			table.insert(unsortedInstructions,i)
 		end
@@ -598,14 +608,14 @@ local function zasmTokenize(str,split)
 				local match = true
 				for ind,token in ipairs(pattern) do
 					local grabbed_token = tokenstack[cur_token+ind]
-					if token == "!BREAK!" or not grabbed_token then
+					if token == "!BREAK!" then
 						-- antipatterns may end in !BREAK!
 						-- to end evaluation early
 						match = false
 						broken = true
 						break
 					end
-					if (not patterns.present_tokens[grabbed_token.t] and not patterns.required) or (token ~= "!ANY!" and grabbed_token.t ~= token) then
+					if not grabbed_token or not patterns.present_tokens[grabbed_token.t] or (token ~= "!ANY!" and token ~= grabbed_token.t) then
 						match = false
 						break
 					end
@@ -694,7 +704,7 @@ local function encodeInstruction(instruction,reg1,reg2,seg1,seg2,fixed)
 			table.insert(nret,ret[i])
 		end
 	end
-	return table.unpack(nret)
+	return unpack(nret)
 end
 
 local unknown_ident_dependents = {}
@@ -728,9 +738,9 @@ local function extractConst(const_token,parent_token,index,immediate)
 			end
 			parent_token.buffer[index] = idents[value]
 		else
-			-- print("Unresolved",value)
+			print("Unresolved",value,immediate)
 			if not index then return end
-			if immediate then error("Ident "..const_token.v.." is undefined!") end
+			if immediate then error("Ident ("..const_token.v..") is undefined!",0) end
 			if not unknown_ident_dependents[value] then
 				unknown_ident_dependents[value] = {}
 			end
@@ -930,7 +940,6 @@ local function dumpValueGroup(token,parentToken,tokens_only)
 			curtoken = curtoken.group[1]
 			goto skip
 		end
-		break
 		::skip::
 	end
 	local dptr = 1
@@ -995,6 +1004,7 @@ local function smallConstTMatch(const_tokens,token_pattern)
 		return false
 	end
 	for ind,const in ipairs(const_tokens) do
+		print(const.group[1].t)
 		local i = token_pattern[ind]
 		if const.group[1].t == i or i == "!ANY!" then
 		else
@@ -1006,6 +1016,7 @@ end
 
 function keyword_handlers.COMPLETE_OFFSET(token)
 	OFFSET = extractConst(token.group[2])
+	print(OFFSET)
 	if OFFSET == nil then
 		error("Invalid offset generated from constant ["..token.group[2].v)
 	end
@@ -1055,7 +1066,7 @@ function keyword_handlers.ALLOC_COMPLETE(token)
 		token.buffer[1] = 0
 		return token.buffer,1
 	end
-	if token.group[2].group[1].t == "NUMBER" or token.group[2].group[1].t == "LITERAL" or token.group[2].group[1].t == "EXPRESSION" then
+	if token.group[2].group[1].t == "NUMBER" or token.group[2].group[1].t == "LITERAL" then
 		local n = extractConst(token.group[2],token)
 		for i=n,1,-1 do
 			table.insert(token.buffer,0)
@@ -1079,7 +1090,6 @@ function macros.DEFINE(ll_tokens,hl_tokens)
 end
 
 function keyword_handlers.COMPLETE_MACRO(token)
-	print("What the fuck is this?")
 	local args = {}
 	for str in string.gmatch(token.v,"[^%s#]+") do
 		table.insert(args,str)
@@ -1095,75 +1105,114 @@ function keyword_handlers.COMPLETE_MACRO(token)
 	end
 end
 
-local f = fs.open(arg[1],"r")
+function ZCAssemble(str,fname,writeByte,successCB,errorCB)
+	errorCallback = errorCB
+	errFname = fname
+	local benchtime = SysTime()
+	local tokens = zasmTokenize(str)
+	unknown_ident_dependents = {}
+	idents = {}
+	ident_lookups = {}
+	DPTR = 0
+	OFFSET = 0
+	OUTPUT_BUFFER = {}
 
-local str = f.readAll()
-f.close()
-benchtime = os.epoch("local")
-local tokens = zasmTokenize(str)
-_G.tokens = tokens
-
--- fixed size allocations, pre-buffer size and constant determination
-for k,token in ipairs(tokens) do
-	local t = token.t
-	local b,s
-	if keyword_handlers[t] then
-		b,s = keyword_handlers[t](token)
-		goto skip
-	end
-	if instruction_encoders[t] then
-		token.buffer = {}
-		token.size = 0
-		local succ
-		succ,b,s = pcall(instruction_encoders[t],token)
-		if not succ then
-			tokenError(b,token)
+	local err = false
+	-- fixed size allocations, pre-buffer size and constant determination
+	for k,token in ipairs(tokens) do
+		local t = token.t
+		local b,s
+		if keyword_handlers[t] then
+			b,s = keyword_handlers[t](token)
+			goto skip
 		end
-	end
-	::skip::
-	if b then
-		token.DPTR = DPTR
-		token.size = s
-		for ind,i in ipairs(b) do
-			token.buffer[ind]=i
-		end
-		DPTR = DPTR + token.size
-	end
-end
-
-for _,token in ipairs(tokens) do
-	if token.buffer then
-		-- print("output ",token.t)
-		local dptr = token.DPTR
-		if token.size ~= #token.buffer then
-			tokenError("Missing values in "..token.t.." (".._..")",token)
-		end
-		for ind,byte in pairs(token.buffer) do 
-			if not byte then
-				error(token.t.."(",_,")".." at pos "..dptr+ind.." has an undefined/invalid constant",0)
+		if instruction_encoders[t] then
+			token.buffer = {}
+			token.size = 0
+			local succ
+			succ,b,s = pcall(instruction_encoders[t],token)
+			if not succ then 
+				err = true
+				tokenError(b,token)
+				break
 			end
-			OUTPUT_BUFFER[dptr+ind] = byte
+		end
+		::skip::
+		if b then
+			token.DPTR = DPTR
+			token.size = s
+			for ind,i in ipairs(b) do
+				token.buffer[ind]=i
+			end
+			DPTR = DPTR + token.size
 		end
 	end
-end
 
-local highest = 0
-for ind,v in pairs(OUTPUT_BUFFER) do
-	-- find end point rq to fill any gaps in program with padding 0's
-	if ind > highest then
-		highest = ind
+	for _,token in ipairs(tokens) do
+		if token.buffer then
+			-- print("output ",token.t)
+			local dptr = token.DPTR
+			if token.size ~= #token.buffer then
+				err = true
+				tokenError("Missing values in "..token.t.." (".._..")",0)
+				break
+			end
+			for ind,byte in pairs(token.buffer) do 
+				-- print(dptr+ind,byte)
+				-- sleep(1)
+				if not byte then
+					err = true
+					tokenError(token.t.."(",_,")".." at pos "..dptr+ind.." has an undefined/invalid constant",0)
+					break
+				end
+				OUTPUT_BUFFER[dptr+ind] = byte
+			end
+		end
 	end
-end
-for i=1,highest do
-	if not OUTPUT_BUFFER[i] then
-		OUTPUT_BUFFER[i] = 0
+	if err then return 0,{},{},{},{},{},{},{},{} end
+
+	local highest = 0
+	for ind,v in pairs(OUTPUT_BUFFER) do
+		-- find end point rq to fill any gaps in program with padding 0's
+		if ind > highest then
+			highest = ind
+		end
 	end
+	for i=1,highest do
+		if not OUTPUT_BUFFER[i] then
+			OUTPUT_BUFFER[i] = 0
+		end
+	end
+	local size = 0
+	for ind,i in ipairs(OUTPUT_BUFFER) do
+		size = size + 1
+		writeByte(nil,ind-1,i)
+	end
+	local warns = {}
+	local MemoryVariableByIndex = {}
+	local MemoryVariableByName = {}
+	local Labels = {}
+	local PositionByPointer = {}
+	local PointersByLine = {} 
+	for k,v in pairs(idents) do
+		Labels[k] = {
+			Pointer = v
+	}
+	end
+	print((SysTime()-benchtime)*1000)
+	-- return these to the GC
+	unknown_ident_dependents = {}
+	idents = {}
+	ident_lookups = {}
+	DPTR = 0
+	OFFSET = 0
+	OUTPUT_BUFFER = {}
+	errorCallback = nil
+	successCB(warns)
+	-- CPULib.Debugger.MemoryVariableByIndex,
+    -- CPULib.Debugger.MemoryVariableByName,
+    -- CPULib.Debugger.Labels,
+    -- CPULib.Debugger.PositionByPointer,
+    -- CPULib.Debugger.PointersByLine 
+	return size,warns,MemoryVariableByIndex,MemoryVariableByName,Labels,PositionByPointer,PointersByLine
 end
-
-_G.outputbuffer = OUTPUT_BUFFER
-
-local f = fs.open("output.zcsm","w")
-f.write(table.concat(OUTPUT_BUFFER,","))
-f.close()
-local endtime = os.epoch("local")
-print(endtime-starttime,endtime-benchtime)
