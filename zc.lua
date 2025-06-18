@@ -80,8 +80,8 @@ local TOKEN_PATTERNS = {
 	LITERAL = {"$'[^']?[^']?[^']?[^']?'"},
 	NUMBER = {
 		"0[xX]%x+", -- hexadecimal
-		"-?%d+%.?%d*e[+-]?%d*", -- scientific
-		"-?%d+%.?%d*", -- decimal
+		"%d+%.?%d*e[+-]?%d*", -- scientific
+		"%d+%.?%d*", -- decimal
 		-- "0[bB][01]+" -- binary (maybe one day)
 	},
 	OP_ASSIGN = {
