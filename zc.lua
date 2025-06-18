@@ -1132,36 +1132,36 @@ function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 		local tokstr = ""
 		for ind,v in ipairs(REGISTER) do
 			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
-			defineLabel("__ZCOMP_REGNAMES_UPPER"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
+			defineLabel("__ZCOMP_REG_NAMES_UPPER_"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
 		end
-		defineLabel("__ZCOMP_REGNAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_REG_NAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
 		return
 	end
 	if string.match(desired,fuzz("registerNamesLower")) then
 		local tokstr = ""
 		for ind,v in ipairs(REGISTER) do
 			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
-			defineLabel("__ZCOMP_REGNAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
+			defineLabel("__ZCOMP_REG_NAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:lower().."\"")[1])
 		end
-		defineLabel("__ZCOMP_REGNAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_REG_NAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
 		return
 	end
 	if string.match(desired,fuzz("segmentRegisterNamesUpper")) then
 		local tokstr = ""
 		for ind,v in ipairs(SEGMENT_REGISTER) do
 			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
-			defineLabel("__ZCOMP_SEGREGNAMES_UPPER_"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
+			defineLabel("__ZCOMP_SEGREG_NAMES_UPPER_"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
 		end
-		defineLabel("__ZCOMP_SEGREGNAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_SEGREG_NAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
 		return
 	end
 	if string.match(desired,fuzz("segmentRegisterNamesLower")) then
 		local tokstr = ""
 		for ind,v in ipairs(SEGMENT_REGISTER) do
 			tokstr = tokstr .. "\"" .. v:lower() .. "\"" .. ",0,"
-			defineLabel("__ZCOMP_SEGREGNAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:lower().."\"")[1])
+			defineLabel("__ZCOMP_SEGREG_NAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:lower().."\"")[1])
 		end
-		defineLabel("__ZCOMP_SEGREGNAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_SEGREG_NAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
 		return
 	end
 end
