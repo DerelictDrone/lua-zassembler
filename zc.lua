@@ -277,6 +277,7 @@ local HL_TOKEN_PATTERNS = {
 		{"INSTRUCTION","REGISTERLIKE","COMMA","REGISTERLIKE"},
 	},
 	INST_REGCONST = {
+		{"INSTRUCTION","REGISTERLIKE","COMMA","CONST_SINGLE","OPERATOR","!BREAK!"},
 		{"INSTRUCTION","REGISTERLIKE","COMMA","CONST_SINGLE"},
 	},
 	INST_CONSTREG = {
@@ -1101,70 +1102,108 @@ end
 -- only generate them if desired.
 function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 	local desired = ll_tokens[2].v
-	if string.match(desired,fuzz("upperInstructionNames")) then
+	if string.match(desired,fuzz("instructionNamesUpper")) then
 		local tokstr = ""
+		local ptrstr = ""
+		local curptr = 0
 		for ind,v in ipairs(Instructions) do
+			ptrstr = ptrstr .. curptr .. ","
+			defineLabel("__ZCOMP_INST_NAMES_UPPER_"..v[4]:upper().."_PTR",curptr)
+			curptr = curptr + #v[4]
 			tokstr = tokstr .. "\"" .. v[4]:upper() .. "\"" .. ",0,"
 			defineLabel("__ZCOMP_INST_NAMES_UPPER_"..v[4]:upper(),zasmTokenize("\""..v[4]:upper().."\"")[1])
 		end
 		defineLabel("__ZCOMP_INST_NAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_INST_NAMES_UPPER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
-	if string.match(desired,fuzz("lowerInstructionNames")) then
+	if string.match(desired,fuzz("instructionNamesLower")) then
 		local tokstr = ""
+		local ptrstr = ""
+		local curptr = 0
 		for ind,v in ipairs(Instructions) do
+			ptrstr = ptrstr .. curptr .. ","
+			defineLabel("__ZCOMP_INST_NAMES_LOWER_"..v[4]:upper().."_PTR",curptr)
+			curptr = curptr + #v[4]
 			tokstr = tokstr .. "\"" .. v[4]:lower() .. "\"" .. ",0,"
 			defineLabel("__ZCOMP_INST_NAMES_LOWER_"..v[4]:upper(),zasmTokenize("\""..v[4]:lower().."\"")[1])
 		end
 		defineLabel("__ZCOMP_INST_NAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_INST_NAMES_LOWER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
 	if string.match(desired,fuzz("opCount")) then
 		local tokstr = ""
+		local ptrstr = ""
 		for ind,v in ipairs(Instructions) do
 			tokstr = tokstr .. v[2] .. ","
-			defineLabel("__ZCOMP_INST_OPERAND_COUNTS_"..v[4]:upper(),zasmTokenize(tostring(v[2]))[1])
+			defineLabel("__ZCOMP_INST_OPERAND_COUNTS_"..v[4]:upper(),v[2])
 		end
 		defineLabel("__ZCOMP_INST_OPERAND_COUNTS",zasmTokenize(tokstr:sub(1,-2))[1])
 		return
 	end
 	if string.match(desired,fuzz("registerNamesUpper")) then
 		local tokstr = ""
+		local ptrstr = ""
+		local curptr = 0
 		for ind,v in ipairs(REGISTER) do
+			ptrstr = ptrstr .. #tokstr .. ","
+			defineLabel("__ZCOMP_REG_NAMES_UPPER_"..v:upper().."_PTR",curptr)
+			curptr = curptr + #v
 			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
 			defineLabel("__ZCOMP_REG_NAMES_UPPER_"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
 		end
 		defineLabel("__ZCOMP_REG_NAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_REG_NAMES_UPPER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
 	if string.match(desired,fuzz("registerNamesLower")) then
 		local tokstr = ""
+		local ptrstr = ""
+		local curptr = 0
 		for ind,v in ipairs(REGISTER) do
+			ptrstr = ptrstr .. #tokstr .. ","
+			defineLabel("__ZCOMP_REG_NAMES_LOWER_"..v:upper().."_PTR",curptr)
+			curptr = curptr + #v
 			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
 			defineLabel("__ZCOMP_REG_NAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:lower().."\"")[1])
 		end
 		defineLabel("__ZCOMP_REG_NAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_REG_NAMES_LOWER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
 	if string.match(desired,fuzz("segmentRegisterNamesUpper")) then
 		local tokstr = ""
+		local ptrstr = ""
+		local curptr = 0
 		for ind,v in ipairs(SEGMENT_REGISTER) do
+			ptrstr = ptrstr .. #tokstr .. ","
+			defineLabel("__ZCOMP_SEGREG_NAMES_UPPER_"..v[4]:upper().."_PTR",curptr)
+			curptr = curptr + #v
 			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
 			defineLabel("__ZCOMP_SEGREG_NAMES_UPPER_"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
 		end
 		defineLabel("__ZCOMP_SEGREG_NAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_SEGREG_NAMES_UPPER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
 	if string.match(desired,fuzz("segmentRegisterNamesLower")) then
 		local tokstr = ""
+		local ptrstr = ""
+		local curptr = 0
 		for ind,v in ipairs(SEGMENT_REGISTER) do
+			ptrstr = ptrstr .. #tokstr .. ","
+			defineLabel("__ZCOMP_SEGREG_NAMES_LOWER_"..v[4]:upper().."_PTR",curptr)
 			tokstr = tokstr .. "\"" .. v:lower() .. "\"" .. ",0,"
 			defineLabel("__ZCOMP_SEGREG_NAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:lower().."\"")[1])
 		end
 		defineLabel("__ZCOMP_SEGREG_NAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
+		defineLabel("__ZCOMP_SEGREG_NAMES_LOWER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
 end
+
+_G.idents = idents
 
 function macros.DEFINE(ll_tokens,hl_tokens)
 	local arg1 = ll_tokens[1]
