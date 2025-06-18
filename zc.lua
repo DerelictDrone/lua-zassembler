@@ -17,8 +17,24 @@ local function fuzz(str,barrier,paren)
 	return newpat
 end
 
+-- case sensitivizer
+local function unfuzz(instr,upper)
+	local len = #instr
+	local str = ""
+	for letter in string.gmatch(instr,"%[([a-zA-Z])[a-zA-Z]+%]") do
+		str = str .. letter
+	end
+	if upper then
+		str = str:upper()
+	else
+		str = str:lower()
+	end
+	return str
+end
+
 local errorCallback
 local errFname
+
 --error wrapper
 local function tokenError(msg,token)
 	token.line = token.line + 2
@@ -72,7 +88,7 @@ local TOKEN_PATTERNS = {
 	PERIOD = {"%."},
 	INSTRUCTION = {}, -- fill from inst set
 	INST_0 = {}, -- zero arg instructions
-	STRING = {"\"[^\n]*\"","'[^\n]*'"},
+	STRING = {"\"[^\n^%\"]*\"","'[[^\n^%\"]*'"},
 	LITERAL = {"$'[^']?[^']?[^']?[^']?'"},
 	NUMBER = {
 		"0[xX]%x+", -- hexadecimal
@@ -716,6 +732,7 @@ setmetatable(idents,{
 	end
 })
 local OFFSET = 0
+local dumpValueGroup
 
 local function extractConst(const_token,parent_token,index,immediate)
 	local t = const_token.t
@@ -732,11 +749,18 @@ local function extractConst(const_token,parent_token,index,immediate)
 		return 1
 	end
 	if t == "IDENT" then
-		if idents[const_token.v] then
-			if not index then
-				return idents[value]
+		local ident = idents[value]
+		if ident then
+			if type(ident) ~= "number" then
+				if ident.t == "COMPLETE_VALUE_GROUP" then
+					return dumpValueGroup(ident,parent_token,nil,immediate)
+				end
+				return extractConst(ident,parent_token,index,immediate) -- ident may be another token type
 			end
-			parent_token.buffer[index] = idents[value]
+			if not index then
+				return ident
+			end
+			parent_token.buffer[index] = ident
 		else
 			print("Unresolved",value,immediate)
 			if not index then return end
@@ -901,7 +925,7 @@ end
 
 function instruction_encoders.INST_CONST(token)
 	local bytes = {encodeInstruction(Instructions[token.group[1].vup],0)}
-	return bytes,#bytes+extractConst(token.group[2],token,3,true)
+	return bytes,#bytes+extractConst(token.group[2],token,3)
 end
 
 function instruction_encoders.INST_CONSTCONST(token)
@@ -909,7 +933,8 @@ function instruction_encoders.INST_CONSTCONST(token)
 	return bytes,#bytes+extractConst(token.group[2],token,3,true)+extractConst(token.group[4],token,4,true)
 end
 
-local function dumpValueGroup(token,parentToken,tokens_only)
+-- defined previously
+dumpValueGroup = function(token,parentToken,tokens_only,immediate)
 	if token.t ~= "COMPLETE_VALUE_GROUP" then
 		tokenError("Attempting to extract an incomplete value group or non value group",token)
 	end
@@ -922,6 +947,7 @@ local function dumpValueGroup(token,parentToken,tokens_only)
 		end
 		if traversed[curtoken] then
 			tokenError("Recursive traversal in value group.",token)
+			return
 		end
 		if curtoken.t == "VALUE_GROUP" then
 			table.insert(const_tokens,1,curtoken.group[3]) -- assuming const_single or const_multi
@@ -947,8 +973,9 @@ local function dumpValueGroup(token,parentToken,tokens_only)
 		return const_tokens
 	end
 	for ind,const in ipairs(const_tokens) do
-		dptr = dptr + extractConst(const,parentToken,dptr)
+		dptr = dptr + extractConst(const,parentToken,dptr,immediate)
 	end
+	return dptr-1
 end
 
 local function defineLabel(name,value,token)
@@ -1076,6 +1103,82 @@ function keyword_handlers.ALLOC_COMPLETE(token)
 end
 
 local macros = {}
+local pragmas = {}
+
+function macros.PRAGMA(ll_tokens,hl_tokens)
+	local arg1 = ll_tokens[1].v
+	if pragmas[arg1] then
+		return pragmas[arg1](ll_tokens,hl_tokens)
+	end
+end
+
+-- only generate them if desired.
+function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
+	local desired = ll_tokens[2].v
+	if string.match(desired,fuzz("upperInstructionNames")) then
+		local tokstr = ""
+		for ind,v in ipairs(Instructions) do
+			tokstr = tokstr .. "\"" .. v[4]:upper() .. "\"" .. ",0,"
+			defineLabel("__ZCOMP_INST_NAMES_UPPER_"..v[4]:upper(),zasmTokenize("\""..v[4]:upper().."\"")[1])
+		end
+		defineLabel("__ZCOMP_INST_NAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
+		return
+	end
+	if string.match(desired,fuzz("lowerInstructionNames")) then
+		local tokstr = ""
+		for ind,v in ipairs(Instructions) do
+			tokstr = tokstr .. "\"" .. v[4]:lower() .. "\"" .. ",0,"
+			defineLabel("__ZCOMP_INST_NAMES_LOWER_"..v[4]:upper(),zasmTokenize("\""..v[4]:lower().."\"")[1])
+		end
+		defineLabel("__ZCOMP_INST_NAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
+		return
+	end
+	if string.match(desired,fuzz("opCount")) then
+		local tokstr = ""
+		for ind,v in ipairs(Instructions) do
+			tokstr = tokstr .. v[2] .. ","
+			defineLabel("__ZCOMP_INST_OPERAND_COUNTS_"..v[4]:upper(),zasmTokenize(tostring(v[2]))[1])
+		end
+		defineLabel("__ZCOMP_INST_OPERAND_COUNTS",zasmTokenize(tokstr:sub(1,-2))[1])
+		return
+	end
+	if string.match(desired,fuzz("registerNamesUpper")) then
+		local tokstr = ""
+		for ind,v in ipairs(REGISTER) do
+			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
+			defineLabel("__ZCOMP_REGNAMES_UPPER"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
+		end
+		defineLabel("__ZCOMP_REGNAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
+		return
+	end
+	if string.match(desired,fuzz("registerNamesLower")) then
+		local tokstr = ""
+		for ind,v in ipairs(REGISTER) do
+			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
+			defineLabel("__ZCOMP_REGNAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
+		end
+		defineLabel("__ZCOMP_REGNAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
+		return
+	end
+	if string.match(desired,fuzz("segmentRegisterNamesUpper")) then
+		local tokstr = ""
+		for ind,v in ipairs(SEGMENT_REGISTER) do
+			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
+			defineLabel("__ZCOMP_SEGREGNAMES_UPPER_"..v:upper(),zasmTokenize("\""..v:upper().."\"")[1])
+		end
+		defineLabel("__ZCOMP_SEGREGNAMES_UPPER",zasmTokenize(tokstr:sub(1,-2))[1])
+		return
+	end
+	if string.match(desired,fuzz("segmentRegisterNamesLower")) then
+		local tokstr = ""
+		for ind,v in ipairs(SEGMENT_REGISTER) do
+			tokstr = tokstr .. "\"" .. v:lower() .. "\"" .. ",0,"
+			defineLabel("__ZCOMP_SEGREGNAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:lower().."\"")[1])
+		end
+		defineLabel("__ZCOMP_SEGREGNAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
+		return
+	end
+end
 
 function macros.DEFINE(ll_tokens,hl_tokens)
 	local arg1 = ll_tokens[1]
@@ -1086,7 +1189,6 @@ function macros.DEFINE(ll_tokens,hl_tokens)
 	if arg1.t == "IDENT" then
 		ident_lookups[arg1.v] = arg2.v
 	end
-
 end
 
 function keyword_handlers.COMPLETE_MACRO(token)
