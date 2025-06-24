@@ -578,6 +578,25 @@ local function getToken(str)
 		end
 	end
 end
+local whitelistTokens = {
+	INST_0            = true,
+	INST_REG          = true,
+	INST_CONST        = true,
+	INST_REGREG       = true,
+	INST_REGCONST     = true,
+	INST_CONSTREG     = true,
+	INST_CONSTCONST   = true,
+	FIN_MULTI_COMMENT = true,
+	COMMENT           = true,
+	LABEL             = true,
+	STATIC_DB         = true,
+	ALLOC_COMPLETE    = true,
+	COMPLETE_MACRO    = true,
+	COMPLETE_ORG      = true,
+	["!NEWLINE!"]     = true,
+	DATA              = true,
+	CODE              = true,
+}
 
 local function zasmTokenize(str,split)
 	local s,e
