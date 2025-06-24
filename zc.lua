@@ -444,7 +444,7 @@ local HL_TOKEN_ORDER = {
 }
 
 local errorTokens = {
-	OPERATOR_ASSIGN = "Assignment cannot be done, as there are no variables in this assembler.",
+	OPERATOR_ASSIGN = "Assignment cannot be done, variables not supported in this assembler.",
 	OPERATOR_BITWISE = "Bitwise operators not supported at this time."
 }
 
