@@ -1,42 +1,12 @@
 local starttime = os.epoch("local")
-local benchtime
 -- tokenizer
+if not tinyToken then
+	require("tinyToken")
+end
+
+local fuzz,unfuzz = tinyToken.fuzz,tinyToken.unfuzz
+
 local smatch = string.match
-
--- case insensitivizer
-local function fuzz(str,barrier,paren)
-	local len = #str
-	local newpat = ""
-	for i=1,len,1 do
-		local char = str:sub(i,i)
-		newpat = newpat .. "["..char:upper()..char:lower().."]"
-	end
-	if paren then
-		newpat = "("..newpat..")"
-	end
-	newpat =  newpat..(barrier and "%s" or "")
-	return newpat
-end
-
--- case sensitivizer
-local function unfuzz(instr,upper)
-	local len = #instr
-	local str = ""
-	for letter in string.gmatch(instr,"%[([a-zA-Z])[a-zA-Z]+%]") do
-		str = str .. letter
-	end
-	if upper then
-		str = str:upper()
-	else
-		str = str:lower()
-	end
-	return str
-end
-
---error wrapper
-local function tokenError(msg,token)
-	error(string.format("%s\n[line: %d column: %d]",msg,token.line,token.s),0)
-end
 
 local TOKEN_PATTERNS = {
 	REGISTER = {
@@ -174,6 +144,28 @@ for k,v in ipairs(TOKEN_PATTERNS.SEGMENT) do
 	TOKEN_PATTERNS.SEGMENT[k] = fuzz(v,false,true)
 end
 
+local Instructions = {}
+do
+	local unsortedInstructions = {}
+	local curdir = fs.getDir(shell.getRunningProgram())
+	local files = fs.list(fs.combine(curdir,"inst"))
+	for _,i in ipairs(files) do
+		local p = require("inst."..i)
+		for _,i in ipairs(p) do
+			table.insert(unsortedInstructions,i)
+		end
+	end
+	local patterns,p0 = TOKEN_PATTERNS.INSTRUCTION,TOKEN_PATTERNS.INST_0
+	for _,i in ipairs(unsortedInstructions) do
+		if i[2] > 0 then 
+			table.insert(patterns,fuzz(i[4],true,true))
+		else
+			table.insert(p0,fuzz(i[4],true,true))
+		end
+		Instructions[i[1]] = i
+		Instructions[i[4]] = i[1]
+	end
+end
 
 local t = TOKEN_PATTERNS
 
@@ -459,125 +451,8 @@ local errorTokens = {
 	OPERATOR_BITWISE = "Bitwise operators not supported at this time."
 }
 
-do
-local function getAllTokenMatches(filter)
-	local matches = {}
-	for ind,patterns in ipairs(HL_TOKEN_ORDER) do
-		if smatch(HL_TOKEN_PATTERNS[ind],filter) then
-			table.insert(matches,HL_TOKEN_PATTERNS[ind])
-		end
-	end
-	for ind,patterns in ipairs(TOKEN_ORDER) do
-		if smatch(TOKEN_PATTERNS[ind],filter) then
-			table.insert(matches,TOKEN_PATTERNS[ind])
-		end
-	end
-	return matches
-end
-local reverse_table = {}
-	for k,v in pairs(HL_TOKEN_PATTERNS) do
-		for ind,i in ipairs(HL_TOKEN_ORDER) do
-			if i == v then
-				reverse_table[ind] = k
-				break
-			end
-		end
-	end
-	for k,v in pairs(reverse_table) do
-		HL_TOKEN_PATTERNS[k] = v
-	end
-	local present_tokens = {}
-	local modified = false
-	for tname,hl_token in ipairs(HL_TOKEN_ORDER) do
-		-- apply start and end to every pattern token (this saves time I swear)
-		::start_over::
-		modified = false
-		present_tokens = {}
-		for _,pattern in ipairs(hl_token) do
-			for ind,token_type in ipairs(pattern) do
-				-- if string.sub(token_type,1,1) == "!" then
-				-- 	break
-				-- end
-				if smatch(token_type,"[%.%*]+") then
-					local f = getAllTokenMatches(token_type)
-					modified = true
-					local r = table.remove(hl_token,_)
-					for find,i in ipairs(f) do
-						local t = {}
-						-- generate a copy of the table but with the filter replaced by the matched token
-						for k,v in ipairs(r) do
-							if k == ind then
-								t[k] = i
-							else
-								t[k] = v
-							end
-						end
-						table.insert(hl_token,_,t)
-					end
-					break
-				end
-				-- generate a list of already known tokens
-				-- we can use this list to do a single hash lookup
-				-- and skip the expensive matches
-				present_tokens[token_type] = true
-				-- pattern[ind] = "^"..token_type.."$"
-			end
-			if modified then break end
-		end
-		if modified then goto start_over end
-		for k,v in pairs(present_tokens) do
-			if k == "!ANY!" then
-				hl_token.required = true
-				break
-			end
-		end
-		hl_token.present_tokens = present_tokens
-	end
-end
-local Instructions = {}
-do
-	local unsortedInstructions = {}
-	local curdir = fs.getDir(shell.getRunningProgram())
-	local files = fs.list(fs.combine(curdir,"inst"))
-	for _,i in ipairs(files) do
-		local p = require("inst."..i)
-		for _,i in ipairs(p) do
-			table.insert(unsortedInstructions,i)
-		end
-	end
-	local patterns,p0 = TOKEN_PATTERNS.INSTRUCTION,TOKEN_PATTERNS.INST_0
-	for _,i in ipairs(unsortedInstructions) do
-		if i[2] > 0 then 
-			table.insert(patterns,fuzz(i[4],true,true))
-		else
-			table.insert(p0,fuzz(i[4],true,true))
-		end
-		Instructions[i[1]] = i
-		Instructions[i[4]] = i[1]
-	end
-end
+-- tokens that are allowed to exist after all work is complete
 
-local function getToken(str)
-	str = str
-	for ind,patternset in ipairs(TOKEN_ORDER) do
-		for _,pattern in ipairs(patternset) do
-			local s,res,e,e2 = str:match("^%s*()("..pattern..")()")
-			if res then
-				if type(e) == "string" then
-					res = e
-					e = e2
-				end
-				return {
-					t = TOKEN_PATTERNS[ind],
-					v = res,
-					vup = res:upper(),
-					vlow = res:lower(),
-					s=s,e=e,
-				}
-			end
-		end
-	end
-end
 local whitelistTokens = {
 	INST_0            = true,
 	INST_REG          = true,
@@ -598,112 +473,11 @@ local whitelistTokens = {
 	CODE              = true,
 }
 
-local function zasmTokenize(str,split)
-	local s,e
-	local tokenstack = {}
-	local lines = 0
-	for word in string.gmatch(str,"[^\n]+") do
-		lines = lines + 1
-		::reword::
-		s,e = 1,#word+1
-		local t = getToken(word)
-		if t then
-			table.insert(tokenstack,t)
-			t.line = lines
-			if t.e < e then
-				word = string.sub(word,t.e,e)
-				goto reword
-			end
-		end
-		table.insert(tokenstack,{
-			t = "!NEWLINE!",
-			v = "\n",
-			vup = "\n",
-			vlow = "\n",
-			s=s,e=e,
-		})
-	end
-	local ll_tokens = {}
-	if split then
-		for ind,i in ipairs(tokenstack) do
-			ll_tokens[ind] = i
-		end
-	end
-	local cur_token = 0
-	local iterations = 0
-	local target = #tokenstack -- if we have not at LEAST performed this many operations, we should double back to make sure nothing was missed.
-	while(true) do
-		for nind,patterns in ipairs(HL_TOKEN_ORDER) do 
-			local broken = false
-			do
-				local checked_token = tokenstack[cur_token+1]
-				if checked_token and not patterns.present_tokens[checked_token.t] and not patterns.required then
-					goto skip
-				end
-			end
-			for _,pattern in ipairs(patterns) do
-				local match = true
-				for ind,token in ipairs(pattern) do
-					local grabbed_token = tokenstack[cur_token+ind]
-					if token == "!BREAK!" or not grabbed_token then
-						-- antipatterns may end in !BREAK!
-						-- to end evaluation early
-						match = false
-						broken = true
-						break
-					end
-					if (not patterns.present_tokens[grabbed_token.t] and not patterns.required) or (token ~= "!ANY!" and grabbed_token.t ~= token) then
-						match = false
-						break
-					end
-				end
-				if broken then break end
-				if match then
-					local hl_token = {
-						t = HL_TOKEN_PATTERNS[nind],
-						group = {},
-						vup = "",
-						v = "",
-						vlow = "",
-					}
-					for i=cur_token+1,cur_token+#pattern do
-						local grabbed_token = table.remove(tokenstack,cur_token+1)
-						hl_token.v = hl_token.v .. ' ' .. grabbed_token.v
-						table.insert(hl_token.group,grabbed_token)
-					end
-					hl_token.line = hl_token.group[1].line
-					hl_token.s = hl_token.group[1].s
-					hl_token.vup = hl_token.v:upper()
-					hl_token.vlow = hl_token.v:lower()
-					if errorTokens[hl_token.t] then
-						tokenError(errorTokens[hl_token.t],hl_token)
-					end
-					table.insert(tokenstack,cur_token+1,hl_token)
-					cur_token = 0
-					target = target + 16 -- a successful token transformation, request two more iterations for the distillation
-					break
-				end
-			end
-			::skip::
-		end
-		cur_token = cur_token + 1
-		iterations = iterations + 1
-		if not tokenstack[cur_token] then
-			if iterations > target then
-				break
-			end
-			cur_token = 0
-		end
-	end
-	if split then
-		return tokenstack,ll_tokens
-	end
-	return tokenstack
-end
 local tokenErrorReason = {
 	OPERATOR = "Operator had no neighboring values to combine into."
 }
 
+local zasmTokenize = tinyToken.createTokenizer(TOKEN_PATTERNS,HL_TOKEN_PATTERNS,TOKEN_ORDER,HL_TOKEN_ORDER,errorTokens,tokenErrorReason)
 
 local REGISTER = {
 	"EAX","EBX","ECX","EDX","ESI","EDI","ESP","EBP", -- General Registers 1-8
@@ -777,6 +551,7 @@ local function extractConst(const_token,parent_token,index,immediate)
 		local ident = idents[value]
 		if ident then
 			if type(ident) ~= "number" then
+				-- print(ident.t)
 				if ident.t == "COMPLETE_VALUE_GROUP" then
 					return dumpValueGroup(ident,parent_token,nil,immediate)
 				end
@@ -787,9 +562,9 @@ local function extractConst(const_token,parent_token,index,immediate)
 			end
 			parent_token.buffer[index] = ident
 		else
-			-- print("Unresolved",value)
+			-- print("Unresolved",value,immediate)
 			if not index then return end
-			if immediate then error("Ident "..const_token.v.." is undefined!",0) end
+			if immediate then error("Ident ("..const_token.v..") is undefined!",2) end
 			if not unknown_ident_dependents[value] then
 				unknown_ident_dependents[value] = {}
 			end
@@ -835,10 +610,29 @@ local function extractConst(const_token,parent_token,index,immediate)
 			local succ
 			succ,v = pcall(v)
 			if not succ then
-				tokenError("Error in expression execution ["..v.."]",const_token)
+				if string.match(v,"a nil value") then
+					local required_labels = {}
+					for match in string.gmatch(const_token.v,"[A-Za-z_][A-Za-z0-9_]*") do
+						table.insert(required_labels,match)
+					end
+					local function expr()
+						for _,label in ipairs(required_labels) do
+							if not idents[label] then return end
+						end
+						return extractConst(const_token,parent_token,index,immediate)
+					end
+					for _,label in ipairs(required_labels) do
+						if not unknown_ident_dependents[label] then
+							unknown_ident_dependents[label] = {}
+						end
+						table.insert(unknown_ident_dependents[label],expr)
+					end
+				else
+					error("Error in expression execution ["..v.."]",0)
+				end
 			end
 		else
-			tokenError("Invalid expression ["..const_token.v.."]",const_token)
+			error("Invalid expression ["..const_token.v.."]",0)
 		end
 		if type(v) == "boolean" then
 			v = v and 1 or 0
@@ -907,7 +701,7 @@ function instruction_encoders.INST_REG(token)
 	local bytes = {encodeInstruction(Instructions[token.group[1].vup],r1)}
 	local size = #bytes
 	if const1 then
-		size = size + extractConst(const1,token,size+1,true)
+		size = size + extractConst(const1,token,size+1)
 	end
 	return bytes,size
 end
@@ -918,10 +712,10 @@ function instruction_encoders.INST_REGREG(token)
 	local bytes = {encodeInstruction(Instructions[token.group[1].vup],r1,r2,seg1,seg2)}
 	local size = #bytes
 	if const1 then
-		size = size + extractConst(const1,token,size+1,true)
+		size = size + extractConst(const1,token,size+1)
 	end
 	if const2 then
-		size = size + extractConst(const2,token,size+1,true)
+		size = size + extractConst(const2,token,size+1)
 	end
 	return bytes,size
 end
@@ -931,9 +725,9 @@ function instruction_encoders.INST_REGCONST(token)
 	local bytes = {encodeInstruction(Instructions[token.group[1].vup],r1,0,seg1)}
 	local size = #bytes
 	if const1 then
-		size = size + extractConst(const1,token,size+1,true)
+		size = size + extractConst(const1,token,size+1)
 	end
-	size = size + extractConst(token.group[4],token,size+1,true)
+	size = size + extractConst(token.group[4],token,size+1)
 	return bytes,size
 end
 
@@ -942,9 +736,9 @@ function instruction_encoders.INST_CONSTREG(token)
 	local bytes = {encodeInstruction(Instructions[token.group[1].vup],0,r2,nil,seg2)}
 	local size = #bytes
 	if const2 then
-		size = size + extractConst(const2,token,size+1,true)
+		size = size + extractConst(const2,token,size+1)
 	end
-	size = size + extractConst(token.group[2],token,size+1,true)
+	size = size + extractConst(token.group[2],token,size+1)
 	return bytes,size
 end
 
@@ -955,13 +749,13 @@ end
 
 function instruction_encoders.INST_CONSTCONST(token)
 	local bytes = {encodeInstruction(Instructions[token.group[1].vup],0,0)}
-	return bytes,#bytes+extractConst(token.group[2],token,3,true)+extractConst(token.group[4],token,4,true)
+	return bytes,#bytes+extractConst(token.group[2],token,3)+extractConst(token.group[4],token,4)
 end
 
--- defined previously
+-- forward declaration
 dumpValueGroup = function(token,parentToken,tokens_only,immediate)
 	if token.t ~= "COMPLETE_VALUE_GROUP" then
-		tokenError("Attempting to extract an incomplete value group or non value group",token)
+		zasmTokenize.tokenError("Attempting to extract an incomplete value group or non value group",token)
 	end
 	local traversed = {}
 	local curtoken = token.group[1]
@@ -971,7 +765,7 @@ dumpValueGroup = function(token,parentToken,tokens_only,immediate)
 			break
 		end
 		if traversed[curtoken] then
-			tokenError("Recursive traversal in value group.",token)
+			zasmTokenize.tokenError("Recursive traversal in value group.",token)
 			return
 		end
 		if curtoken.t == "VALUE_GROUP" then
@@ -991,7 +785,6 @@ dumpValueGroup = function(token,parentToken,tokens_only,immediate)
 			curtoken = curtoken.group[1]
 			goto skip
 		end
-		break
 		::skip::
 	end
 	local dptr = 1
@@ -1007,15 +800,21 @@ end
 local function defineLabel(name,value,token)
 	if idents[name] then
 		if token then
-			tokenError("Attempted to redefine label ("..name..")",token)
+			error("Attempted to redefine label ("..name..")",0)
 		end
 		error("Attempted to redefine label ("..name..")",2)
 	end
+	-- print("Defined",name)
 	idents[name] = value
 	if unknown_ident_dependents[name] then
 		for _,unk in ipairs(unknown_ident_dependents[name]) do
-			unk[2].buffer[unk[3]] = DPTR + OFFSET
+			if type(unk) == "function" then
+				unk(value)
+			else
+				unk[2].buffer[unk[3]] = value
+			end
 		end
+		unknown_ident_dependents[name] = nil
 	end
 end
 
@@ -1044,32 +843,28 @@ end
 function keyword_handlers.STATIC_DB(token)
 	token.buffer = {}
 	token.DPTR = DPTR
+	local size = 0
 	if token.group[2].t == "COMPLETE_VALUE_GROUP" then
-		dumpValueGroup(token.group[2],token)
+		size = dumpValueGroup(token.group[2],token)
 	else
-		extractConst(token.group[2],token,1)
+		size = extractConst(token.group[2],token,1)
 	end
-	return token.buffer,#token.buffer
-end
-
-local function smallConstTMatch(const_tokens,token_pattern)
-	if #const_tokens ~= #token_pattern then
-		return false
-	end
-	for ind,const in ipairs(const_tokens) do
-		local i = token_pattern[ind]
-		if const.group[1].t == i or i == "!ANY!" then
-		else
-			return false
-		end
-	end
-	return true
+	return token.buffer,size
 end
 
 function keyword_handlers.COMPLETE_OFFSET(token)
 	OFFSET = extractConst(token.group[2])
+	-- print(OFFSET)
 	if OFFSET == nil then
 		error("Invalid offset generated from constant ["..token.group[2].v)
+	end
+end
+
+function keyword_handlers.COMPLETE_ORG(token)
+	DPTR = extractConst(token.group[2])
+	-- print(OFFSET)
+	if OFFSET == nil then
+		error("Invalid dptr generated from constant ["..token.group[2].v)
 	end
 end
 
@@ -1117,7 +912,14 @@ function keyword_handlers.ALLOC_COMPLETE(token)
 		token.buffer[1] = 0
 		return token.buffer,1
 	end
-	if token.group[2].group[1].t == "NUMBER" or token.group[2].group[1].t == "LITERAL" or token.group[2].group[1].t == "EXPRESSION" then
+	if token.group[2].group[1].t == "NUMBER" or token.group[2].group[1].t == "LITERAL" then
+		local n = extractConst(token.group[2],token)
+		for i=n,1,-1 do
+			table.insert(token.buffer,0)
+		end
+		return token.buffer,n
+	else
+		-- just assume it's a const_single or something idk
 		local n = extractConst(token.group[2],token)
 		for i=n,1,-1 do
 			table.insert(token.buffer,0)
@@ -1139,7 +941,7 @@ end
 -- only generate them if desired.
 function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 	local desired = ll_tokens[2].v
-	if string.match(desired,fuzz("instructionNamesUpper")) then
+	if smatch(desired,fuzz("instructionNamesUpper")) then
 		local tokstr = ""
 		local ptrstr = ""
 		local curptr = 0
@@ -1154,7 +956,7 @@ function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 		defineLabel("__ZCOMP_INST_NAMES_UPPER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
-	if string.match(desired,fuzz("instructionNamesLower")) then
+	if smatch(desired,fuzz("instructionNamesLower")) then
 		local tokstr = ""
 		local ptrstr = ""
 		local curptr = 0
@@ -1169,7 +971,7 @@ function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 		defineLabel("__ZCOMP_INST_NAMES_LOWER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
-	if string.match(desired,fuzz("opCount")) then
+	if smatch(desired,fuzz("opCount")) then
 		local tokstr = ""
 		local ptrstr = ""
 		for ind,v in ipairs(Instructions) do
@@ -1179,7 +981,7 @@ function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 		defineLabel("__ZCOMP_INST_OPERAND_COUNTS",zasmTokenize(tokstr:sub(1,-2))[1])
 		return
 	end
-	if string.match(desired,fuzz("registerNamesUpper")) then
+	if smatch(desired,fuzz("registerNamesUpper")) then
 		local tokstr = ""
 		local ptrstr = ""
 		local curptr = 0
@@ -1194,7 +996,7 @@ function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 		defineLabel("__ZCOMP_REG_NAMES_UPPER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
-	if string.match(desired,fuzz("registerNamesLower")) then
+	if smatch(desired,fuzz("registerNamesLower")) then
 		local tokstr = ""
 		local ptrstr = ""
 		local curptr = 0
@@ -1202,14 +1004,14 @@ function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 			ptrstr = ptrstr .. #tokstr .. ","
 			defineLabel("__ZCOMP_REG_NAMES_LOWER_"..v:upper().."_PTR",curptr)
 			curptr = curptr + #v
-			tokstr = tokstr .. "\"" .. v:upper() .. "\"" .. ",0,"
+			tokstr = tokstr .. "\"" .. v:lower() .. "\"" .. ",0,"
 			defineLabel("__ZCOMP_REG_NAMES_LOWER_"..v:upper(),zasmTokenize("\""..v:lower().."\"")[1])
 		end
 		defineLabel("__ZCOMP_REG_NAMES_LOWER",zasmTokenize(tokstr:sub(1,-2))[1])
 		defineLabel("__ZCOMP_REG_NAMES_LOWER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
-	if string.match(desired,fuzz("segmentRegisterNamesUpper")) then
+	if smatch(desired,fuzz("segmentRegisterNamesUpper")) then
 		local tokstr = ""
 		local ptrstr = ""
 		local curptr = 0
@@ -1224,7 +1026,7 @@ function pragmas.GenerateInstructionDefines(ll_tokens,hl_tokens)
 		defineLabel("__ZCOMP_SEGREG_NAMES_UPPER_PTRS",zasmTokenize(ptrstr:sub(1,-2))[1])
 		return
 	end
-	if string.match(desired,fuzz("segmentRegisterNamesLower")) then
+	if smatch(desired,fuzz("segmentRegisterNamesLower")) then
 		local tokstr = ""
 		local ptrstr = ""
 		local curptr = 0
@@ -1245,11 +1047,25 @@ _G.idents = idents
 function macros.DEFINE(ll_tokens,hl_tokens)
 	local arg1 = ll_tokens[1]
 	local arg2 = ll_tokens[2]
+	-- print(arg1.v,arg1.t,arg2.v,arg2.t)
 	if arg2.t == "NUMBER" then
 		ident_lookups[arg1.v] = tonumber(arg2.v)
+		goto solved
 	end
-	if arg1.t == "IDENT" then
+	if arg2.t == "IDENT" then
 		ident_lookups[arg1.v] = arg2.v
+		goto solved
+	end
+	if arg2.t == "CONST_SINGLE" or arg2.t == "CONST_MULTI" then
+		ident_lookups[arg1.v] = arg2
+		goto solved
+	end
+	::solved::
+	if unknown_ident_dependents[arg1.v] then
+		for _,unk in ipairs(unknown_ident_dependents[arg1.v]) do
+			-- print("dependants")
+			unk[2].buffer[unk[3]] = extractConst(arg2,nil,nil)
+		end
 	end
 end
 
@@ -1260,27 +1076,50 @@ function keyword_handlers.COMPLETE_MACRO(token)
 	end
 	local fn = string.upper(table.remove(args,1))
 	if not macros[fn] then
-		tokenError("Invalid Macro ("..fn..")",token)
+		zasmTokenize.tokenError("Invalid Macro ("..fn..")",token)
+		return
 	end
 	local tokens,ll_tokens = zasmTokenize(table.concat(args," "),true)
 	local succ,err = pcall(macros[fn],ll_tokens,tokens)
 	if not succ then
-		tokenError("Macro Error:"..err,token)
+		zasmTokenize.tokenError("Macro Error:"..err,token)
 	end
 end
 
-local f = fs.open(arg[1],"r")
+local str
+do
+	local f = fs.open(arg[1],"r")
+	str = f.readAll()
+	f.close()
+end
 
-local str = f.readAll()
-f.close()
-benchtime = os.epoch("local")
+local benchtime = os.epoch("local")
 local tokens = zasmTokenize(str)
-_G.tokens = tokens
+unknown_ident_dependents = {}
+idents = {}
+ident_lookups = {}
+setmetatable(idents,{
+	__index = function(self,k)
+		return rawget(ident_lookups,ident_lookups[k]) or ident_lookups[k]
+	end
+})
+_G._idents = idents
+_G._ident_lookups = ident_lookups
+_G_ident_dependents = unknown_ident_dependents
+_G._tokens = tokens
+DPTR = 0
+OFFSET = 0
+OUTPUT_BUFFER = {}
 
 -- fixed size allocations, pre-buffer size and constant determination
-for k,token in ipairs(tokens) do
+for ind,token in ipairs(tokens) do
 	local t = token.t
 	local b,s
+	-- print(token.line,token.t,token.v)
+	if not whitelistTokens[t] then
+		zasmTokenize.tokenError(tokenErrorReason[t] or "Syntax error. Token of type "..(token.t or "undefined").." was left over.",token)
+		break
+	end
 	if keyword_handlers[t] then
 		b,s = keyword_handlers[t](token)
 		goto skip
@@ -1290,8 +1129,9 @@ for k,token in ipairs(tokens) do
 		token.size = 0
 		local succ
 		succ,b,s = pcall(instruction_encoders[t],token)
-		if not succ then
-			tokenError(b,token)
+		if not succ then 
+			zasmTokenize.tokenError(b,token)
+			break
 		end
 	end
 	::skip::
@@ -1304,22 +1144,38 @@ for k,token in ipairs(tokens) do
 		DPTR = DPTR + token.size
 	end
 end
-
+if zasmTokenize.error then return 0,{},{},{},{},{},{},{},{} end
+if next(unknown_ident_dependents) then
+	local n,token = next(unknown_ident_dependents)
+	if type(token) == "function" then
+		zasmTokenize.tokenError(n.." is used in an expression but was never defined",{s=1,line=1})
+	else
+		zasmTokenize.tokenError(token[1][2].t.." has an undefined ident("..n..")",token[1][1])
+	end
+end
+if zasmTokenize.error then return 0,{},{},{},{},{},{},{},{} end
 for _,token in ipairs(tokens) do
+	-- print(token.t,token.v)
 	if token.buffer then
 		-- print("output ",token.t)
 		local dptr = token.DPTR
 		if token.size ~= #token.buffer then
-			tokenError("Missing values in "..token.t.." (".._..")",token)
+			_missingToken = token
+			zasmTokenize.tokenError("Missing values in "..token.t.." (".._..")",token)
+			break
 		end
 		for ind,byte in pairs(token.buffer) do 
+			-- print(dptr+ind,byte)
+			-- sleep(1)
 			if not byte then
-				error(token.t.."(",_,")".." at pos "..dptr+ind.." has an undefined/invalid constant",0)
+				zasmTokenize.tokenError(token.t.."(",_,")".." at pos "..dptr+ind.." has an undefined/invalid constant",0)
+				break
 			end
 			OUTPUT_BUFFER[dptr+ind] = byte
 		end
 	end
 end
+if zasmTokenize.error then return 0,{},{},{},{},{},{},{},{} end
 
 local highest = 0
 for ind,v in pairs(OUTPUT_BUFFER) do
@@ -1333,11 +1189,22 @@ for i=1,highest do
 		OUTPUT_BUFFER[i] = 0
 	end
 end
-
-_G.outputbuffer = OUTPUT_BUFFER
-
+local size = 0
 local f = fs.open("output.zcsm","w")
 f.write(table.concat(OUTPUT_BUFFER,","))
 f.close()
+local warns = {}
+local MemoryVariableByIndex = {}
+local MemoryVariableByName = {}
+local Labels = {}
+local PositionByPointer = {}
+local PointersByLine = {} 
+for k,v in pairs(idents) do
+	if type(v) == "number" then
+		Labels[k] = {
+			Pointer = v
+		}
+	end
+end
 local endtime = os.epoch("local")
 print(endtime-starttime,endtime-benchtime)
