@@ -76,7 +76,10 @@ local TOKEN_PATTERNS = {
 	PERIOD = {"%."},
 	INSTRUCTION = {}, -- fill from inst set
 	INST_0 = {}, -- zero arg instructions
-	STRING = {"\"[^\n^%\"]*\"","'[[^\n^%\"]*'"},
+	STRING = {
+		"\"[^\n%\"]*\"",
+		"'[^\n%\']*'"
+	},
 	LITERAL = {"$'[^']?[^']?[^']?[^']?'"},
 	NUMBER = {
 		"0[xX]%x+", -- hexadecimal
